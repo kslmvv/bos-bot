@@ -134,18 +134,19 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/add 123456789 — по Telegram ID"
         )
         return
-    arg = context.args[0].strip()
+    arg = "".join(context.args).strip()
     data = load_data()
-    if arg.startswith("+") or (arg.isdigit() and len(arg) > 10):
-        clean = arg.lstrip("+").replace(" ","").replace("-","")
+    arg_clean = arg.replace(" ","").replace("-","")
+    if arg_clean.startswith("+") or (arg_clean.isdigit() and len(arg_clean) > 7):
+        clean = arg_clean.lstrip("+")
         if clean not in data["phones"]:
             data["phones"].append(clean)
             save_data(data)
             await update.message.reply_text(f"✅ Номер +{clean} добавлен. Всего: {len(data['phones'])}")
         else:
             await update.message.reply_text(f"ℹ️ Номер +{clean} уже в списке.")
-    elif arg.isdigit():
-        tid = int(arg)
+    elif arg_clean.isdigit():
+        tid = int(arg_clean)
         if tid not in data["telegram_ids"]:
             data["telegram_ids"].append(tid)
             save_data(data)
@@ -162,18 +163,19 @@ async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Использование: /remove +998901234567 или /remove 123456789")
         return
-    arg = context.args[0].strip()
+    arg = "".join(context.args).strip()
     data = load_data()
-    if arg.startswith("+") or (arg.isdigit() and len(arg) > 10):
-        clean = arg.lstrip("+").replace(" ","")
+    arg_clean = arg.replace(" ","").replace("-","")
+    if arg_clean.startswith("+") or (arg_clean.isdigit() and len(arg_clean) > 7):
+        clean = arg_clean.lstrip("+")
         if clean in data["phones"]:
             data["phones"].remove(clean)
             save_data(data)
             await update.message.reply_text(f"✅ Номер +{clean} удалён.")
         else:
             await update.message.reply_text(f"ℹ️ Номер +{clean} не найден.")
-    elif arg.isdigit():
-        tid = int(arg)
+    elif arg_clean.isdigit():
+        tid = int(arg_clean)
         if tid in data["telegram_ids"]:
             data["telegram_ids"].remove(tid)
             save_data(data)
@@ -214,12 +216,14 @@ async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/addadmin +998901234567 — по номеру телефона"
         )
         return
-    arg = context.args[0].strip()
+    arg = "".join(context.args).strip()
     data = load_data()
 
-    if arg.startswith("+") or (arg.isdigit() and len(arg) > 10):
-        # По номеру телефона — ищем в telegram_ids через phones
-        clean = arg.lstrip("+").replace(" ","").replace("-","")
+    # Очищаем от пробелов и тире сразу
+    arg_clean = arg.replace(" ","").replace("-","")
+    if arg_clean.startswith("+") or (arg_clean.isdigit() and len(arg_clean) > 7):
+        # По номеру телефона
+        clean = arg_clean.lstrip("+")
         # Добавляем номер в список admin_phones
         if "admin_phones" not in data:
             data["admin_phones"] = []
@@ -251,11 +255,12 @@ async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/removeadmin +998901234567 — по номеру телефона"
         )
         return
-    arg = context.args[0].strip()
+    arg = "".join(context.args).strip()
     data = load_data()
 
-    if arg.startswith("+") or (arg.isdigit() and len(arg) > 10):
-        clean = arg.lstrip("+").replace(" ","")
+    arg_clean = arg.replace(" ","").replace("-","")
+    if arg_clean.startswith("+") or (arg_clean.isdigit() and len(arg_clean) > 7):
+        clean = arg_clean.lstrip("+")
         admin_phones = data.get("admin_phones", [])
         if clean in admin_phones:
             admin_phones.remove(clean)
