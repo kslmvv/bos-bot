@@ -10,47 +10,47 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 WEBAPP_URL = os.environ.get("WEBAPP_URL", "https://kslmvv.github.io/bos-course/")
 
-# Ваш Telegram ID — только вы можете добавлять/удалять пользователей
-# Узнать свой ID: написать @userinfobot
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+# Главный администратор — только он может добавлять других админов
+SUPER_ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
-# Файл для хранения разрешённых пользователей
 USERS_FILE = "/tmp/allowed_users.json"
 
-# ── БАЗА ПОЛЬЗОВАТЕЛЕЙ ────────────────────────────────
-def load_users() -> dict:
-    """Загружаем базу пользователей"""
+# ── БАЗА ДАННЫХ ───────────────────────────────────────
+def load_data() -> dict:
     try:
         if os.path.exists(USERS_FILE):
             with open(USERS_FILE, "r") as f:
                 return json.load(f)
     except Exception as e:
-        logger.error(f"Ошибка загрузки users: {e}")
-    return {"phones": [], "telegram_ids": []}
+        logger.error(f"Ошибка загрузки: {e}")
+    return {"phones": [], "telegram_ids": [], "admins": []}
 
-def save_users(data: dict):
-    """Сохраняем базу пользователей"""
+def save_data(data: dict):
     try:
         with open(USERS_FILE, "w") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logger.error(f"Ошибка сохранения users: {e}")
+        logger.error(f"Ошибка сохранения: {e}")
+
+def is_super_admin(user_id: int) -> bool:
+    return SUPER_ADMIN_ID != 0 and user_id == SUPER_ADMIN_ID
 
 def is_admin(user_id: int) -> bool:
-    return ADMIN_ID != 0 and user_id == ADMIN_ID
-
-def is_allowed_id(telegram_id: int) -> bool:
-    """Проверяем Telegram ID"""
-    if ADMIN_ID != 0 and telegram_id == ADMIN_ID:
+    if is_super_admin(user_id):
         return True
-    data = load_users()
-    return telegram_id in data.get("telegram_ids", [])
+    data = load_data()
+    return user_id in data.get("admins", [])
 
-def is_allowed_phone(phone: str) -> bool:
-    """Проверяем номер телефона"""
-    clean = phone.strip().lstrip("+").replace(" ", "").replace("-", "")
-    data = load_users()
-    return clean in [p.lstrip("+").replace(" ", "") for p in data.get("phones", [])]
+def is_allowed(user_id: int, phone: str = None) -> bool:
+    if is_admin(user_id):
+        return True
+    data = load_data()
+    if user_id in data.get("telegram_ids", []):
+        return True
+    if phone:
+        clean = phone.strip().lstrip("+").replace(" ", "").replace("-", "")
+        return clean in [p.lstrip("+").replace(" ", "") for p in data.get("phones", [])]
+    return False
 
 # ── ТЕКСТЫ ────────────────────────────────────────────
 WELCOME_TEXT = """👋 *Добро пожаловать!*
@@ -72,42 +72,30 @@ DENIED_TEXT = """🔒 *Доступ закрыт*
 
 Если это ошибка — обратитесь к организатору."""
 
-# ── КОМАНДЫ ПОЛЬЗОВАТЕЛЯ ─────────────────────────────
+# ── ПОЛЬЗОВАТЕЛЬ ─────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
-    # Проверяем по Telegram ID сразу
-    if is_allowed_id(user_id):
+    if is_allowed(user_id):
         await send_course_button(update)
         return
-
-    # Запрашиваем номер телефона
     keyboard = [[KeyboardButton("📱 Поделиться номером", request_contact=True)]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     await update.message.reply_text(
-        WELCOME_TEXT,
-        parse_mode="Markdown",
-        reply_markup=reply_markup
+        WELCOME_TEXT, parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     )
 
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Получили контакт — проверяем доступ"""
     contact = update.message.contact
     if not contact:
         return
-
     phone = contact.phone_number
     user_id = update.effective_user.id
-    logger.info(f"Контакт: {phone}, user_id: {user_id}")
-
     await update.message.reply_text("🔍 Проверяю доступ...", reply_markup=ReplyKeyboardRemove())
-
-    if is_allowed_phone(phone) or is_allowed_id(user_id):
-        # Добавляем Telegram ID чтобы в следующий раз не спрашивать номер
-        data = load_users()
+    if is_allowed(user_id, phone):
+        data = load_data()
         if user_id not in data["telegram_ids"]:
             data["telegram_ids"].append(user_id)
-            save_users(data)
+            save_data(data)
         await send_course_button(update)
     else:
         await update.message.reply_text(DENIED_TEXT, parse_mode="Markdown")
@@ -115,70 +103,57 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_course_button(update: Update):
     keyboard = [[InlineKeyboardButton("📚 Открыть курс", web_app=WebAppInfo(url=WEBAPP_URL))]]
     await update.message.reply_text(
-        GRANTED_TEXT,
-        parse_mode="Markdown",
+        GRANTED_TEXT, parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 # ── КОМАНДЫ АДМИНИСТРАТОРА ────────────────────────────
 async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Добавить пользователя: /add +998901234567 или /add @username"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("❌ У вас нет прав администратора.")
         return
-
     if not context.args:
         await update.message.reply_text(
             "Использование:\n"
-            "/add +998901234567 — добавить по номеру\n"
-            "/add 123456789 — добавить по Telegram ID\n\n"
-            "Чтобы узнать Telegram ID пользователя — попросите их переслать сообщение боту @userinfobot"
+            "/add +998901234567 — по номеру телефона\n"
+            "/add 123456789 — по Telegram ID"
         )
         return
-
     arg = context.args[0].strip()
-    data = load_users()
-
-    # Определяем что добавляем — номер или ID
+    data = load_data()
     if arg.startswith("+") or (arg.isdigit() and len(arg) > 10):
-        # Это номер телефона
         clean = arg.lstrip("+").replace(" ", "").replace("-", "")
         if clean not in data["phones"]:
             data["phones"].append(clean)
-            save_users(data)
-            await update.message.reply_text(f"✅ Номер +{clean} добавлен.\nВсего номеров: {len(data['phones'])}")
+            save_data(data)
+            await update.message.reply_text(f"✅ Номер +{clean} добавлен. Всего номеров: {len(data['phones'])}")
         else:
             await update.message.reply_text(f"ℹ️ Номер +{clean} уже в списке.")
     elif arg.isdigit():
-        # Это Telegram ID
         tid = int(arg)
         if tid not in data["telegram_ids"]:
             data["telegram_ids"].append(tid)
-            save_users(data)
-            await update.message.reply_text(f"✅ Telegram ID {tid} добавлен.\nВсего ID: {len(data['telegram_ids'])}")
+            save_data(data)
+            await update.message.reply_text(f"✅ Telegram ID {tid} добавлен. Всего ID: {len(data['telegram_ids'])}")
         else:
             await update.message.reply_text(f"ℹ️ ID {tid} уже в списке.")
     else:
-        await update.message.reply_text("❌ Неверный формат.\nИспользуйте: /add +998901234567 или /add 123456789")
+        await update.message.reply_text("❌ Неверный формат. Используйте: /add +998901234567 или /add 123456789")
 
 async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Удалить пользователя: /remove +998901234567"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("❌ У вас нет прав администратора.")
         return
-
     if not context.args:
         await update.message.reply_text("Использование: /remove +998901234567 или /remove 123456789")
         return
-
     arg = context.args[0].strip()
-    data = load_users()
-
+    data = load_data()
     if arg.startswith("+") or (arg.isdigit() and len(arg) > 10):
         clean = arg.lstrip("+").replace(" ", "")
         if clean in data["phones"]:
             data["phones"].remove(clean)
-            save_users(data)
+            save_data(data)
             await update.message.reply_text(f"✅ Номер +{clean} удалён.")
         else:
             await update.message.reply_text(f"ℹ️ Номер +{clean} не найден.")
@@ -186,42 +161,89 @@ async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tid = int(arg)
         if tid in data["telegram_ids"]:
             data["telegram_ids"].remove(tid)
-            save_users(data)
+            save_data(data)
             await update.message.reply_text(f"✅ ID {tid} удалён.")
         else:
             await update.message.reply_text(f"ℹ️ ID {tid} не найден.")
 
 async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/list — показать всех пользователей"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("❌ У вас нет прав администратора.")
         return
-
-    data = load_users()
+    data = load_data()
     phones = data.get("phones", [])
     tids = data.get("telegram_ids", [])
-
-    text = f"📋 *Список доступа*\n\n"
-    text += f"📱 *Номера телефонов* ({len(phones)}):\n"
+    admins = data.get("admins", [])
+    text = "📋 *Список доступа*\n\n"
+    text += f"📱 *Номера* ({len(phones)}):\n"
     for p in phones:
         text += f"  +{p}\n"
     text += f"\n🆔 *Telegram ID* ({len(tids)}):\n"
     for t in tids:
         text += f"  {t}\n"
-
+    text += f"\n👑 *Администраторы* ({len(admins)+1}):\n"
+    text += f"  {SUPER_ADMIN_ID} (главный)\n"
+    for a in admins:
+        text += f"  {a}\n"
     if not phones and not tids:
-        text += "_Список пуст — доступ открыт всем_"
-
+        text += "\n_Участников нет_"
     await update.message.reply_text(text, parse_mode="Markdown")
 
+# ── КОМАНДЫ ТОЛЬКО ДЛЯ СУПЕР-АДМИНА ─────────────────
+async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Только супер-админ может добавлять других админов"""
+    if not is_super_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Только главный администратор может добавлять админов.")
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Использование: /addadmin 123456789\n\nTelegram ID узнать: @userinfobot")
+        return
+    tid = int(context.args[0])
+    data = load_data()
+    if tid not in data["admins"]:
+        data["admins"].append(tid)
+        save_data(data)
+        await update.message.reply_text(f"✅ ID {tid} назначен администратором.")
+    else:
+        await update.message.reply_text(f"ℹ️ ID {tid} уже администратор.")
+
+async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удалить администратора"""
+    if not is_super_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Только главный администратор может удалять админов.")
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Использование: /removeadmin 123456789")
+        return
+    tid = int(context.args[0])
+    data = load_data()
+    if tid in data["admins"]:
+        data["admins"].remove(tid)
+        save_data(data)
+        await update.message.reply_text(f"✅ ID {tid} удалён из администраторов.")
+    else:
+        await update.message.reply_text(f"ℹ️ ID {tid} не найден в администраторах.")
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_admin(update.effective_user.id):
+    user_id = update.effective_user.id
+    if is_super_admin(user_id):
+        text = (
+            "👑 *Команды главного администратора:*\n\n"
+            "/add +998XXXXXXXXX — добавить участника по номеру\n"
+            "/add 123456789 — добавить по Telegram ID\n"
+            "/remove +998XXXXXXXXX — удалить участника\n"
+            "/list — список всех участников и админов\n"
+            "/addadmin 123456789 — назначить администратора\n"
+            "/removeadmin 123456789 — снять администратора\n"
+            "/start — открыть курс\n"
+        )
+    elif is_admin(user_id):
         text = (
             "🛠 *Команды администратора:*\n\n"
-            "/add +998901234567 — добавить по номеру\n"
+            "/add +998XXXXXXXXX — добавить участника по номеру\n"
             "/add 123456789 — добавить по Telegram ID\n"
-            "/remove +998901234567 — удалить\n"
-            "/list — список всех пользователей\n"
+            "/remove +998XXXXXXXXX — удалить участника\n"
+            "/list — список участников\n"
             "/start — открыть курс\n"
         )
     else:
@@ -231,18 +253,16 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN не задан!")
-    if ADMIN_ID == 0:
-        logger.warning("ADMIN_ID не задан — команды /add /remove недоступны!")
-
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("add", add_user))
     app.add_handler(CommandHandler("remove", remove_user))
     app.add_handler(CommandHandler("list", list_users))
+    app.add_handler(CommandHandler("addadmin", add_admin))
+    app.add_handler(CommandHandler("removeadmin", remove_admin))
     app.add_handler(MessageHandler(filters.CONTACT, contact_handler))
-
-    logger.info(f"Бот запущен. Admin ID: {ADMIN_ID}")
+    logger.info(f"Бот запущен. Super Admin: {SUPER_ADMIN_ID}")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
