@@ -9,10 +9,7 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 WEBAPP_URL = os.environ.get("WEBAPP_URL", "https://kslmvv.github.io/bos-course/")
-
-# Главный администратор — только он может добавлять других админов
 SUPER_ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
-
 USERS_FILE = "/tmp/allowed_users.json"
 
 # ── БАЗА ДАННЫХ ───────────────────────────────────────
@@ -32,50 +29,61 @@ def save_data(data: dict):
     except Exception as e:
         logger.error(f"Ошибка сохранения: {e}")
 
-def is_super_admin(user_id: int) -> bool:
-    return SUPER_ADMIN_ID != 0 and user_id == SUPER_ADMIN_ID
-
-def is_admin(user_id: int) -> bool:
-    if is_super_admin(user_id):
-        return True
+def is_super_admin(uid): return SUPER_ADMIN_ID != 0 and uid == SUPER_ADMIN_ID
+def is_admin(uid):
+    if is_super_admin(uid): return True
+    return uid in load_data().get("admins", [])
+def is_allowed(uid, phone=None):
+    if is_admin(uid): return True
     data = load_data()
-    return user_id in data.get("admins", [])
-
-def is_allowed(user_id: int, phone: str = None) -> bool:
-    if is_admin(user_id):
-        return True
-    data = load_data()
-    if user_id in data.get("telegram_ids", []):
-        return True
+    if uid in data.get("telegram_ids", []): return True
     if phone:
-        clean = phone.strip().lstrip("+").replace(" ", "").replace("-", "")
-        return clean in [p.lstrip("+").replace(" ", "") for p in data.get("phones", [])]
+        clean = phone.strip().lstrip("+").replace(" ","").replace("-","")
+        return clean in [p.lstrip("+").replace(" ","") for p in data.get("phones",[])]
     return False
 
 # ── ТЕКСТЫ ────────────────────────────────────────────
-WELCOME_TEXT = """👋 *Добро пожаловать!*
+WELCOME_TEXT = """\
+🎓 *Добро пожаловать!*
 
+━━━━━━━━━━━━━━━━━━━━━━
 📚 *Курс «Бизнес Операционная Система»*
-_от Александра Высоцкого_
+👤 *Автор:* Александр Высоцкий
+━━━━━━━━━━━━━━━━━━━━━━
 
-Для получения доступа поделитесь своим номером телефона 👇"""
+Этот курс поможет вам:
+✅ Выстроить систему управления бизнесом
+✅ Освободиться от операционки
+✅ Масштабировать компанию без хаоса
 
-GRANTED_TEXT = """✅ *Доступ открыт!*
+Для получения доступа нажмите кнопку ниже 👇\
+"""
 
-Добро пожаловать на курс *«Бизнес Операционная Система»* от Александра Высоцкого.
+GRANTED_TEXT = """\
+✅ *Доступ открыт!*
 
-Нажмите кнопку ниже чтобы начать обучение 👇"""
+━━━━━━━━━━━━━━━━━━━━━━
+🎓 *Курс «Бизнес Операционная Система»*
+👤 *Александр Высоцкий*
+━━━━━━━━━━━━━━━━━━━━━━
 
-DENIED_TEXT = """🔒 *Доступ закрыт*
+Нажмите кнопку ниже чтобы начать обучение 👇\
+"""
+
+DENIED_TEXT = """\
+🔒 *Доступ закрыт*
+
+━━━━━━━━━━━━━━━━━━━━━━
 
 Ваш номер не найден в списке участников курса.
 
-Если это ошибка — обратитесь к организатору."""
+Если это ошибка — обратитесь к организатору.\
+"""
 
 # ── ПОЛЬЗОВАТЕЛЬ ─────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if is_allowed(user_id):
+    uid = update.effective_user.id
+    if is_allowed(uid):
         await send_course_button(update)
         return
     keyboard = [[KeyboardButton("📱 Поделиться номером", request_contact=True)]]
@@ -86,15 +94,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     contact = update.message.contact
-    if not contact:
-        return
+    if not contact: return
     phone = contact.phone_number
-    user_id = update.effective_user.id
+    uid = update.effective_user.id
     await update.message.reply_text("🔍 Проверяю доступ...", reply_markup=ReplyKeyboardRemove())
-    if is_allowed(user_id, phone):
+    if is_allowed(uid, phone):
         data = load_data()
-        if user_id not in data["telegram_ids"]:
-            data["telegram_ids"].append(user_id)
+        if uid not in data["telegram_ids"]:
+            data["telegram_ids"].append(uid)
             save_data(data)
         await send_course_button(update)
     else:
@@ -122,11 +129,11 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     arg = context.args[0].strip()
     data = load_data()
     if arg.startswith("+") or (arg.isdigit() and len(arg) > 10):
-        clean = arg.lstrip("+").replace(" ", "").replace("-", "")
+        clean = arg.lstrip("+").replace(" ","").replace("-","")
         if clean not in data["phones"]:
             data["phones"].append(clean)
             save_data(data)
-            await update.message.reply_text(f"✅ Номер +{clean} добавлен. Всего номеров: {len(data['phones'])}")
+            await update.message.reply_text(f"✅ Номер +{clean} добавлен. Всего: {len(data['phones'])}")
         else:
             await update.message.reply_text(f"ℹ️ Номер +{clean} уже в списке.")
     elif arg.isdigit():
@@ -134,11 +141,11 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tid not in data["telegram_ids"]:
             data["telegram_ids"].append(tid)
             save_data(data)
-            await update.message.reply_text(f"✅ Telegram ID {tid} добавлен. Всего ID: {len(data['telegram_ids'])}")
+            await update.message.reply_text(f"✅ ID {tid} добавлен. Всего: {len(data['telegram_ids'])}")
         else:
             await update.message.reply_text(f"ℹ️ ID {tid} уже в списке.")
     else:
-        await update.message.reply_text("❌ Неверный формат. Используйте: /add +998901234567 или /add 123456789")
+        await update.message.reply_text("❌ Формат: /add +998901234567 или /add 123456789")
 
 async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -150,7 +157,7 @@ async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     arg = context.args[0].strip()
     data = load_data()
     if arg.startswith("+") or (arg.isdigit() and len(arg) > 10):
-        clean = arg.lstrip("+").replace(" ", "")
+        clean = arg.lstrip("+").replace(" ","")
         if clean in data["phones"]:
             data["phones"].remove(clean)
             save_data(data)
@@ -176,27 +183,22 @@ async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admins = data.get("admins", [])
     text = "📋 *Список доступа*\n\n"
     text += f"📱 *Номера* ({len(phones)}):\n"
-    for p in phones:
-        text += f"  +{p}\n"
+    for p in phones: text += f"  +{p}\n"
     text += f"\n🆔 *Telegram ID* ({len(tids)}):\n"
-    for t in tids:
-        text += f"  {t}\n"
+    for t in tids: text += f"  {t}\n"
     text += f"\n👑 *Администраторы* ({len(admins)+1}):\n"
     text += f"  {SUPER_ADMIN_ID} (главный)\n"
-    for a in admins:
-        text += f"  {a}\n"
+    for a in admins: text += f"  {a}\n"
     if not phones and not tids:
         text += "\n_Участников нет_"
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# ── КОМАНДЫ ТОЛЬКО ДЛЯ СУПЕР-АДМИНА ─────────────────
 async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Только супер-админ может добавлять других админов"""
     if not is_super_admin(update.effective_user.id):
         await update.message.reply_text("❌ Только главный администратор может добавлять админов.")
         return
     if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Использование: /addadmin 123456789\n\nTelegram ID узнать: @userinfobot")
+        await update.message.reply_text("Использование: /addadmin 123456789")
         return
     tid = int(context.args[0])
     data = load_data()
@@ -208,7 +210,6 @@ async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"ℹ️ ID {tid} уже администратор.")
 
 async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Удалить администратора"""
     if not is_super_admin(update.effective_user.id):
         await update.message.reply_text("❌ Только главный администратор может удалять админов.")
         return
@@ -222,25 +223,25 @@ async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_data(data)
         await update.message.reply_text(f"✅ ID {tid} удалён из администраторов.")
     else:
-        await update.message.reply_text(f"ℹ️ ID {tid} не найден в администраторах.")
+        await update.message.reply_text(f"ℹ️ ID {tid} не найден.")
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if is_super_admin(user_id):
+    uid = update.effective_user.id
+    if is_super_admin(uid):
         text = (
             "👑 *Команды главного администратора:*\n\n"
-            "/add +998XXXXXXXXX — добавить участника по номеру\n"
+            "/add +998XXXXXXXXX — добавить по номеру\n"
             "/add 123456789 — добавить по Telegram ID\n"
             "/remove +998XXXXXXXXX — удалить участника\n"
-            "/list — список всех участников и админов\n"
+            "/list — список участников и админов\n"
             "/addadmin 123456789 — назначить администратора\n"
             "/removeadmin 123456789 — снять администратора\n"
             "/start — открыть курс\n"
         )
-    elif is_admin(user_id):
+    elif is_admin(uid):
         text = (
             "🛠 *Команды администратора:*\n\n"
-            "/add +998XXXXXXXXX — добавить участника по номеру\n"
+            "/add +998XXXXXXXXX — добавить по номеру\n"
             "/add 123456789 — добавить по Telegram ID\n"
             "/remove +998XXXXXXXXX — удалить участника\n"
             "/list — список участников\n"
