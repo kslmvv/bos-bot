@@ -56,7 +56,12 @@ def is_allowed(uid, phone=None):
     if uid in data.get("telegram_ids", []): return True
     if phone:
         c = clean_phone(phone)
-        return c in [clean_phone(p) for p in data.get("phones", [])]
+        # Проверяем список участников
+        if c in [clean_phone(p) for p in data.get("phones", [])]:
+            return True
+        # Проверяем список admin_phones — они тоже имеют доступ
+        if c in [clean_phone(p) for p in data.get("admin_phones", [])]:
+            return True
     return False
 
 # ── ТЕКСТЫ ────────────────────────────────────────────
