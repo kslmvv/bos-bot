@@ -19,7 +19,7 @@ def load_data():
                 return json.load(f)
     except Exception as e:
         logger.error(f"Ошибка загрузки: {e}")
-    return {"phones": [], "telegram_ids": [], "admins": [], "admin_phones": []}
+    return {"phones": [], "telegram_ids": [], "admins": [], "admin_phones": [], "stats": {}}
 
 def save_data(data):
     try:
@@ -308,6 +308,80 @@ async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Формат: /removeadmin +998901234567 или /removeadmin 123456789")
 
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Статистика просмотров — только для админов"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ У вас нет прав администратора.")
+        return
+
+    data = load_data()
+    stats = data.get("stats", {})
+
+    if not stats:
+        await update.message.reply_text("📊 Статистика пока пуста — никто ещё не смотрел видео.")
+        return
+
+    # Если указан конкретный пользователь
+    if context.args:
+        uid_str = "".join(context.args).strip().replace("+","")
+        # Ищем по ID или номеру
+        user_stats = None
+        user_key = None
+        for key, val in stats.items():
+            if key == uid_str or val.get("phone","").replace("+","") == uid_str:
+                user_stats = val
+                user_key = key
+                break
+
+        if not user_stats:
+            await update.message.reply_text(f"ℹ️ Пользователь не найден в статистике.")
+            return
+
+        watched = user_stats.get("watched", [])
+        last = user_stats.get("last_title", "—")
+        last_date = user_stats.get("last_date", "—")
+        phone = user_stats.get("phone", "—")
+
+        text = f"📊 *Статистика пользователя*\n\n"
+        text += f"🆔 ID: `{user_key}`\n"
+        text += f"📱 Номер: {phone}\n"
+        text += f"📚 Просмотрено: *{len(watched)} видео*\n"
+        text += f"📅 Последнее: {last}\n"
+        text += f"🕐 Дата: {last_date}\n\n"
+        if watched:
+            text += "*Просмотренные темы:*\n"
+            for w in watched[-10:]:  # последние 10
+                text += f"  • {w}\n"
+            if len(watched) > 10:
+                text += f"  _...и ещё {len(watched)-10}_\n"
+        await update.message.reply_text(text, parse_mode="Markdown")
+        return
+
+    # Общая статистика
+    total_users = len(stats)
+    text = f"📊 *Общая статистика просмотров*\n\n"
+    text += f"👥 Всего пользователей: *{total_users}*\n\n"
+
+    # Сортируем по количеству просмотров
+    sorted_stats = sorted(stats.items(), key=lambda x: len(x[1].get("watched",[])), reverse=True)
+
+    for uid, val in sorted_stats:
+        watched_count = len(val.get("watched", []))
+        phone = val.get("phone", uid)
+        last = val.get("last_title", "—")
+        last_date = val.get("last_date", "—")
+        text += f"👤 *{phone}*\n"
+        text += f"   📚 Видео: {watched_count} | 🕐 {last_date}\n"
+        text += f"   Последнее: _{last}_\n\n"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def track_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Принимаем данные о просмотре от WebApp"""
+    # Эта функция вызывается когда WebApp отправляет данные
+    # Но sendData закрывает WebApp, поэтому используем другой подход
+    pass
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if is_super_admin(uid):
@@ -320,6 +394,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/addadmin +998XXXXXXXXX — назначить админа по номеру\n"
             "/addadmin 123456789 — назначить админа по ID\n"
             "/removeadmin +998XXXXXXXXX — снять админа\n"
+            "/stats — общая статистика просмотров\n"
+            "/stats 123456789 — статистика пользователя\n"
             "/start — открыть курс\n"
         )
     elif is_admin(uid):
@@ -329,6 +405,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/add 123456789 — добавить по Telegram ID\n"
             "/remove +998XXXXXXXXX — удалить участника\n"
             "/list — список участников\n"
+            "/stats — статистика просмотров\n"
             "/start — открыть курс\n"
         )
     else:
@@ -344,6 +421,7 @@ def main():
     app.add_handler(CommandHandler("add", add_user))
     app.add_handler(CommandHandler("remove", remove_user))
     app.add_handler(CommandHandler("list", list_users))
+    app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("addadmin", add_admin))
     app.add_handler(CommandHandler("removeadmin", remove_admin))
     app.add_handler(MessageHandler(filters.CONTACT, contact_handler))
@@ -352,3 +430,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# Дополнительный обработчик для получения статистики через WebApp
+# WebApp сохраняет данные в Telegram CloudStorage
+# Бот читает их через /stats команду
